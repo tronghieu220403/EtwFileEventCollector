@@ -3,6 +3,79 @@
 
 namespace debug {
 
+	std::mutex file_debug_mutex;
+	HANDLE log_file_handle = INVALID_HANDLE_VALUE;
+	int debug_count = 0;
+
+	void InitDebugLog()
+	{
+		if (log_file_handle != INVALID_HANDLE_VALUE)
+		{
+			CloseHandle(log_file_handle);
+		}
+		log_file_handle = CreateFileW(
+			LOG_PATH,
+			FILE_APPEND_DATA,
+			FILE_SHARE_READ,
+			nullptr,
+			OPEN_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL,
+			nullptr
+		);
+		if (log_file_handle == INVALID_HANDLE_VALUE || log_file_handle == 0)
+		{
+			// Handle error (optional: log to another output)
+		}
+		debug_count = 0;
+	}
+
+	void CleanupDebugLog()
+	{
+		if (log_file_handle != INVALID_HANDLE_VALUE)
+		{
+			CloseHandle(log_file_handle);
+			log_file_handle = INVALID_HANDLE_VALUE;
+		}
+	}
+
+	void WriteDebugToFileW(const std::wstring& message)
+	{
+		std::lock_guard<std::mutex> lock(file_debug_mutex);
+
+		try {
+			if (log_file_handle == INVALID_HANDLE_VALUE || log_file_handle == 0)
+			{
+				InitDebugLog();
+				if (log_file_handle == INVALID_HANDLE_VALUE || log_file_handle == 0)
+				{
+					return;
+				}
+			}
+			debug_count++;
+
+            size_t size = wcslen(message.c_str());
+
+            WCHAR* buffer = (WCHAR*)message.c_str();
+
+            if (size == 0 || buffer[size - 1] != L'\n') {
+                buffer[size] = L'\n';
+                size++;
+            }
+
+			DWORD bytes_written = 0;
+			WriteFile(log_file_handle, buffer, size * sizeof(wchar_t), &bytes_written, nullptr);
+			//FlushFileBuffers(log_file_handle);
+
+			if (debug_count >= DEBUG_LOG_THRESHOLD) {
+				CleanupDebugLog();
+				InitDebugLog();
+			}
+		}
+		catch (...) {
+			// Handle exception if needed
+		}
+	}
+
 	void DebugPrintW(const wchar_t* pwsz_format, ...) {
 		if (pwsz_format == nullptr) return;
 
@@ -48,6 +121,7 @@ namespace debug {
 
 		// Null-terminated already, safe to print
 		OutputDebugStringW(buffer.data());
+		WriteDebugToFileW(buffer.data());
 	}
 
 
