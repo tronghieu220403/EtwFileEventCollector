@@ -114,6 +114,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -137,6 +138,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="EtwFileEventCollector.cpp" />
+    <ClCompile Include="EtwController.cpp" />
     <ClCompile Include="service\service.cpp" />
     <ClCompile Include="ulti\debug.cpp" />
     <ClCompile Include="ulti\support.cpp" />
@@ -177,6 +179,7 @@
     <ClInclude Include="krabs\krabs\ut.hpp" />
     <ClInclude Include="krabs\krabs\version_helpers.hpp" />
     <ClInclude Include="krabs\krabs\wstring_convert.hpp" />
+    <ClInclude Include="EtwController.h" />
     <ClInclude Include="service\service.h" />
     <ClInclude Include="ulti\debug.h" />
     <ClInclude Include="ulti\include.h" />

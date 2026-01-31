@@ -27,6 +27,9 @@
     <ClCompile Include="ulti\support.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="EtwController.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="krabs\krabs\filtering\comparers.hpp">
@@ -144,6 +147,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="ulti\support.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EtwController.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
