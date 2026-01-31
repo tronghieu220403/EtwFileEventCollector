@@ -241,7 +241,6 @@ void EtwController::HandleFileCreate(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
     // Parse done -> identity decisions first
     ULONGLONG name_hash = 0;
     MaybePrintIH(ts, path, name_hash);
-    MaybePrintIO(ts, fo, name_hash);
 
     // Manage object table for later lookups
     {
@@ -252,12 +251,14 @@ void EtwController::HandleFileCreate(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
     // Operation
     if (eid == KFE_CREATE_NEW_FILE)
     {
+        MaybePrintIO(ts, fo, name_hash);
         LogFileCreateOperation(eid, ts, name_hash);
     }
 
     // Delete-on-close mapped to delete operation without file key
     if ((co & 0x00001000) != 0)
     {
+        MaybePrintIO(ts, fo, name_hash);
         LogFileDeleteOperation(eid, ts, name_hash, fo, 0);
     }
 }
