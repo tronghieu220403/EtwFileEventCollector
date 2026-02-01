@@ -183,6 +183,7 @@
     <ClInclude Include="service\service.h" />
     <ClInclude Include="ulti\debug.h" />
     <ClInclude Include="ulti\include.h" />
+    <ClInclude Include="ulti\lru_cache.hpp" />
     <ClInclude Include="ulti\support.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

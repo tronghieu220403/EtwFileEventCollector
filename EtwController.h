@@ -1,9 +1,12 @@
 ﻿#pragma once
 #include "ulti/support.h"
+#include "ulti/lru_cache.hpp"
+
+#define MAX_CACHE_SIZE 100000
 
 // ===== Forward =====
-struct FileInfo;
 struct EventInfo;
+struct IHEntry;
 
 class EtwController
 {
@@ -53,27 +56,32 @@ private:
     std::mutex m_lockProc;
 
     // ================= Identity tables =================
-    // name_hash -> printed (IH)
-    std::unordered_set<ULONGLONG> m_printedNameHash;
+    // IHCache
+    std::unordered_map<ULONGLONG, IHEntry> m_ihCache;
+
+    // printed IH LRU
+    LruSet<ULONGLONG> m_printedNameHash{ MAX_CACHE_SIZE };
 
     // file_object -> name_hash
     std::unordered_map<ULONGLONG, ULONGLONG> m_objToNameHash;
 
     // printed file_object (IO)
-    std::unordered_set<ULONGLONG> m_printedObj;
-
-    // printed file_key (IK)
-    std::unordered_set<ULONGLONG> m_printedKey;
+    LruSet<ULONGLONG> m_printedObj{ MAX_CACHE_SIZE };
 
     std::mutex m_identityMutex;
+
+    // ================= IH Cache =================
+    void IHCacheAdd(ULONGLONG ts, const std::wstring& lower_path, ULONGLONG name_hash);
+    void IHCacheRelease(ULONGLONG name_hash);
+    bool AddToIHCache(ULONGLONG ts, const std::wstring& path, ULONGLONG& out_name_hash);
+    void MaybePrintIH(ULONGLONG ts, ULONGLONG name_hash);
 
     // ================= Process logging =================
     void MaybePrintProcessInfo(ULONG eid, ULONGLONG ts, ULONG pid, const std::wstring& path);
 
     // ================= Identity logging =================
-    void MaybePrintIH(ULONGLONG ts, const std::wstring& path, ULONGLONG& out_name_hash);
     void MaybePrintIO(ULONGLONG ts, ULONGLONG file_object, ULONGLONG name_hash);
-    void MaybePrintIK(ULONG eid, ULONGLONG ts, ULONGLONG file_key, ULONGLONG name_hash);
+    void ForcePrintIK(ULONG eid, ULONGLONG ts, ULONGLONG file_key, ULONGLONG name_hash);
 
     // ================= File operation logging =================
     void LogFileCreateOperation(ULONG eid, ULONGLONG ts, ULONGLONG name_hash);
@@ -92,12 +100,10 @@ private:
     static void PrintAllProp(krabs::schema schema, krabs::parser& parser);
 };
 
-struct FileInfo
-{
+struct IHEntry {
     std::wstring path;
-    ULONGLONG name_hash = 0;
-    bool written = false;
-    bool printed = false;
+    size_t ref_count;
+    ULONGLONG last_used_ts;
 };
 
 struct EventInfo

@@ -152,5 +152,8 @@
     <ClInclude Include="EtwController.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="ulti\lru_cache.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
