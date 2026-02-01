@@ -68,6 +68,9 @@ private:
     // printed file_object (IO)
     LruSet<ULONGLONG> m_printedObj{ MAX_CACHE_SIZE };
 
+    // printed write IO
+    LruSet<ULONGLONG> m_printedWriteObj{ MAX_CACHE_SIZE };
+
     std::mutex m_identityMutex;
 
     // ================= IH Cache =================
@@ -84,10 +87,10 @@ private:
     void ForcePrintIK(ULONG eid, ULONGLONG ts, ULONGLONG file_key, ULONGLONG name_hash);
 
     // ================= File operation logging =================
-    void LogFileCreateOperation(ULONG eid, ULONGLONG ts, ULONGLONG name_hash);
-    void LogFileWriteOperation(ULONG eid, ULONGLONG ts, ULONGLONG file_object, ULONGLONG size);
-    void LogFileRenameOperation(ULONG eid, ULONGLONG ts, ULONGLONG name_hash, ULONGLONG file_object, ULONGLONG file_key);
-    void LogFileDeleteOperation(ULONG eid, ULONGLONG ts, ULONGLONG name_hash, ULONGLONG file_object, ULONGLONG file_key);
+    void LogFileCreateOperation(ULONG pid, ULONG eid, ULONGLONG ts, ULONGLONG name_hash);
+    void LogFileWriteOperation(ULONG pid, ULONG eid, ULONGLONG ts, ULONGLONG file_object);
+    void LogFileRenameOperation(ULONG pid, ULONG eid, ULONGLONG ts, ULONGLONG name_hash, ULONGLONG file_object, ULONGLONG file_key);
+    void LogFileDeleteOperation(ULONG pid, ULONG eid, ULONGLONG ts, ULONGLONG name_hash, ULONGLONG file_object, ULONGLONG file_key);
 
     // ================= File handlers =================
     void HandleFileCreate(ULONG pid, ULONG eid, ULONGLONG ts, krabs::parser& parser);

@@ -55,6 +55,7 @@ EtwController::~EtwController()
 void EtwController::PrintAllProp(krabs::schema schema, krabs::parser& parser)
 {
     std::wstringstream ss;
+    ss << L"event_id=" << schema.event_id() << L", ";
     ss << L"task_name=" << schema.task_name() << L", ";
     ss << L"PID=" << schema.process_id() << L", ";
 
@@ -80,8 +81,8 @@ void EtwController::PrintAllProp(krabs::schema schema, krabs::parser& parser)
             ss << x.name() << L" " << wstr << L", ";
     }
 
-    //if (ss.str().find(L"load\\test") != std::wstring::npos)
-    //    std::wcout << ss.str() << endl;
+    if (ss.str().find(L"load\\test") != std::wstring::npos)
+        std::wcout << ss.str() << endl;
 }
 
 // ================= Logger =================
@@ -301,31 +302,31 @@ void EtwController::ForcePrintIK(ULONG eid, ULONGLONG ts, ULONGLONG file_key, UL
 }
 
 // ================= File operation logging =================
-void EtwController::LogFileCreateOperation(ULONG eid, ULONGLONG ts, ULONGLONG name_hash)
+void EtwController::LogFileCreateOperation(ULONG pid, ULONG eid, ULONGLONG ts, ULONGLONG name_hash)
 {
     std::wstringstream ss;
-    ss << L"F,C," << eid << L"," << ts << L"," << name_hash;
+    ss << L"F,C," << eid << L"," << pid << L"," << ts << L"," << name_hash;
     PushLog(ss.str());
 }
 
-void EtwController::LogFileWriteOperation(ULONG eid, ULONGLONG ts, ULONGLONG file_object, ULONGLONG size)
+void EtwController::LogFileWriteOperation(ULONG pid, ULONG eid, ULONGLONG ts, ULONGLONG file_object)
 {
     std::wstringstream ss;
-    ss << L"F,W," << eid << L"," << ts << L"," << file_object << L"," << size;
+    ss << L"F,W," << eid << L"," << pid << L"," << ts << L"," << file_object;
     PushLog(ss.str());
 }
 
-void EtwController::LogFileRenameOperation(ULONG eid, ULONGLONG ts, ULONGLONG name_hash, ULONGLONG file_object, ULONGLONG file_key)
+void EtwController::LogFileRenameOperation(ULONG pid, ULONG eid, ULONGLONG ts, ULONGLONG name_hash, ULONGLONG file_object, ULONGLONG file_key)
 {
     std::wstringstream ss;
-    ss << L"F,RN," << eid << L"," << ts << L"," << name_hash << L"," << file_object << L"," << file_key;
+    ss << L"F,RN," << eid << L"," << pid << L"," << ts << L"," << name_hash << L"," << file_object << L"," << file_key;
     PushLog(ss.str());
 }
 
-void EtwController::LogFileDeleteOperation(ULONG eid, ULONGLONG ts, ULONGLONG name_hash, ULONGLONG file_object, ULONGLONG file_key)
+void EtwController::LogFileDeleteOperation(ULONG pid, ULONG eid, ULONGLONG ts, ULONGLONG name_hash, ULONGLONG file_object, ULONGLONG file_key)
 {
     std::wstringstream ss;
-    ss << L"F,D," << eid << L"," << ts << L"," << name_hash << L"," << file_object << L"," << file_key;
+    ss << L"F,D," << eid << L"," << pid << L"," << ts << L"," << name_hash << L"," << file_object << L"," << file_key;
     PushLog(ss.str());
 }
 
@@ -344,6 +345,7 @@ void EtwController::HandleFileCreate(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
     {
         std::lock_guard<std::mutex> lock(m_identityMutex);
         m_objToNameHash[fo] = name_hash;
+        m_printedWriteObj.erase(fo);
     }
 
     // Operation
@@ -351,7 +353,7 @@ void EtwController::HandleFileCreate(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
     {
         MaybePrintIH(ts, name_hash);
         MaybePrintIO(ts, fo, name_hash);
-        LogFileCreateOperation(eid, ts, name_hash);
+        LogFileCreateOperation(pid, eid, ts, name_hash);
     }
 
     // Delete-on-close mapped to delete operation without file key
@@ -359,7 +361,7 @@ void EtwController::HandleFileCreate(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
     {
         MaybePrintIH(ts, name_hash);
         MaybePrintIO(ts, fo, name_hash);
-        LogFileDeleteOperation(eid, ts, name_hash, fo, 0);
+        LogFileDeleteOperation(pid, eid, ts, name_hash, fo, 0);
     }
 }
 
@@ -370,6 +372,7 @@ void EtwController::HandleFileCleanup(ULONG eid, ULONGLONG ts, krabs::parser& pa
         std::lock_guard<std::mutex> lock(m_identityMutex);
         m_objToNameHash.erase(fo);
         m_printedObj.erase(fo);
+        m_printedWriteObj.erase(fo);
     }
 }
 
@@ -377,9 +380,12 @@ void EtwController::HandleFileWrite(ULONG pid, ULONG eid, ULONGLONG ts, krabs::p
 {
     ULONGLONG fo = (ULONGLONG)parser.parse<PVOID>(L"FileObject");
 
-    // Optional size field, keep 0 if missing
-    ULONGLONG sz = 0;
-    parser.try_parse<ULONGLONG>(L"IoSize", sz);
+    m_identityMutex.lock();
+    if (m_printedWriteObj.contains(fo) == true) {
+        m_identityMutex.unlock();
+        return;
+    }
+    m_identityMutex.unlock();
 
     // Parse done -> identity decisions first (IO requires name_hash, resolve via obj table)
     ULONGLONG name_hash = 0;
@@ -393,7 +399,10 @@ void EtwController::HandleFileWrite(ULONG pid, ULONG eid, ULONGLONG ts, krabs::p
     MaybePrintIO(ts, fo, name_hash);
 
     // Operation
-    LogFileWriteOperation(eid, ts, fo, sz);
+    LogFileWriteOperation(pid, eid, ts, fo);
+    m_identityMutex.lock();
+    m_printedWriteObj.insert(fo);
+    m_identityMutex.unlock();
 }
 
 void EtwController::HandleFileRename(ULONG pid, ULONG eid, ULONGLONG ts, krabs::parser& parser)
@@ -427,7 +436,7 @@ void EtwController::HandleFileRename(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
         MaybePrintIO(ts, fo, name_hash);
 
     // Operation
-    LogFileRenameOperation(eid, ts, name_hash, fo, key);
+    LogFileRenameOperation(pid, eid, ts, name_hash, fo, key);
 }
 
 void EtwController::HandleFileDelete(ULONG pid, ULONG eid, ULONGLONG ts, krabs::parser& parser)
@@ -463,7 +472,7 @@ void EtwController::HandleFileDelete(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
         parser.try_parse<ULONGLONG>(L"FileObject", fo);
         if (fo != 0)
             MaybePrintIO(ts, fo, name_hash);
-        LogFileDeleteOperation(eid, ts, name_hash, fo, key);
+        LogFileDeleteOperation(pid, eid, ts, name_hash, fo, key);
         return;
     }
 
@@ -484,7 +493,7 @@ void EtwController::HandleFileDelete(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
         MaybePrintIO(ts, fo, name_hash);
 
         // Operation
-        LogFileDeleteOperation(eid, ts, name_hash, fo, key);
+        LogFileDeleteOperation(pid, eid, ts, name_hash, fo, key);
         return;
     }
 }
@@ -528,12 +537,14 @@ void EtwController::StartProviderBlocking()
     // ===== File provider =====
     krabs::provider<> file(L"Microsoft-Windows-Kernel-File");
     file.any(0x10 | 0x20 | 0x80 | 0x200 | 0x400 | 0x800 | 0x1000);
-    file.enable_rundown_events();
+    //file.enable_rundown_events();
 
     auto file_cb = [this](const EVENT_RECORD& r, const krabs::trace_context& c)
         {
             krabs::schema s(r, c.schema_locator);
             krabs::parser parser(s);
+            //PrintAllProp(s, parser);
+            //return;
             uint32_t pid = s.process_id();
             if (pid == m_curPid || pid == 4) {
                 return;
@@ -558,7 +569,7 @@ void EtwController::StartProviderBlocking()
                 {
                     HandleFileRename(pid, eid, ts, parser);
                 }
-                if (eid == KFE_SET_DELETE || eid == KFE_DELETE_PATH) // SetDelete and DeletePath 
+                if (eid == KFE_SET_DELETE || eid == KFE_DELETE_PATH || eid == KFE_NAME_DELETE) // SetDelete, DeletePath and NameDelete
                 {
                     HandleFileDelete(pid, eid, ts, parser);
                 }
@@ -580,6 +591,7 @@ void EtwController::Start()
 {
     StartLoggerThread();
 
+    // https://lowleveldesign.wordpress.com/2020/08/15/fixing-empty-paths-in-fileio-events-etw
     m_traceThread = std::jthread([this]() {
         StartProviderBlocking();
         });
