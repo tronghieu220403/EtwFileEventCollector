@@ -2,7 +2,7 @@
 #include "ulti/support.h"
 #include "ulti/lru_cache.hpp"
 
-#define MAX_CACHE_SIZE 100000
+#define MAX_CACHE_SIZE 1000000
 
 // ===== Forward =====
 struct EventInfo;
@@ -77,14 +77,14 @@ private:
     void IHCacheAdd(ULONGLONG ts, const std::wstring& lower_path, ULONGLONG name_hash);
     void IHCacheRelease(ULONGLONG name_hash);
     bool AddToIHCache(ULONGLONG ts, const std::wstring& path, ULONGLONG& out_name_hash);
-    void MaybePrintIH(ULONGLONG ts, ULONGLONG name_hash);
+    void MaybePrintIH(ULONGLONG name_hash);
 
     // ================= Process logging =================
     void MaybePrintProcessInfo(ULONG eid, ULONGLONG ts, ULONG pid, const std::wstring& path);
 
     // ================= Identity logging =================
-    void MaybePrintIO(ULONGLONG ts, ULONGLONG file_object, ULONGLONG name_hash);
-    void ForcePrintIK(ULONG eid, ULONGLONG ts, ULONGLONG file_key, ULONGLONG name_hash);
+    void MaybePrintIO(ULONGLONG file_object, ULONGLONG name_hash);
+    void ForcePrintIK(ULONG eid, ULONGLONG file_key, ULONGLONG name_hash);
 
     // ================= File operation logging =================
     void LogFileCreateOperation(ULONG pid, ULONG eid, ULONGLONG ts, ULONGLONG name_hash);

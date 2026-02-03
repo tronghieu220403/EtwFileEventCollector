@@ -82,7 +82,7 @@ void EtwController::PrintAllProp(krabs::schema schema, krabs::parser& parser)
     }
 
     if (ss.str().find(L"load\\test") != std::wstring::npos)
-        std::wcout << ss.str() << endl;
+        wcout << ss.str() << endl;
 }
 
 // ================= Logger =================
@@ -208,10 +208,7 @@ void EtwController::IHCacheRelease(ULONGLONG name_hash)
 //  - Computes name_hash
 //  - Adds the entry to IHCache
 // Logging is deferred until a real file operation occurs.
-bool EtwController::AddToIHCache(
-    ULONGLONG ts,
-    const std::wstring& path,
-    ULONGLONG& out_name_hash)
+bool EtwController::AddToIHCache(ULONGLONG ts, const std::wstring& path, ULONGLONG& out_name_hash)
 {
     out_name_hash = 0;
     if (path.empty())
@@ -237,23 +234,23 @@ bool EtwController::AddToIHCache(
 // Once printed, the entry is:
 //  - Inserted into printedNameHash LRU
 //  - Removed from IHCache regardless of ref_count
-void EtwController::MaybePrintIH(
-    ULONGLONG ts,
-    ULONGLONG name_hash)
+void EtwController::MaybePrintIH(ULONGLONG name_hash)
 {
     std::lock_guard<std::mutex> lock(m_identityMutex);
     auto it = m_ihCache.find(name_hash);
-    if (it == m_ihCache.end())
+    if (it == m_ihCache.end()) {
         return;
+    }
 
     // Already printed -> nothing to do
-    if (m_printedNameHash.contains(name_hash) == true)
+    if (m_printedNameHash.contains(name_hash) == true) {
         return;
+    }
 
     const auto& entry = it->second;
 
     std::wstringstream ss;
-    ss << L"F,IH,0," << ts << L"," << name_hash << L"," << entry.path;
+    ss << L"F,IH,0,0," << name_hash << L"," << entry.path;
     PushLog(ss.str());
 
     // Update printed IH LRU cache
@@ -275,29 +272,30 @@ void EtwController::MaybePrintProcessInfo(ULONG eid, ULONGLONG ts, ULONG pid, co
 }
 
 // ================= Identity logging =================
-void EtwController::MaybePrintIO(ULONGLONG ts, ULONGLONG file_object, ULONGLONG name_hash)
+void EtwController::MaybePrintIO(ULONGLONG file_object, ULONGLONG name_hash)
 {
     if (file_object == 0 || name_hash == 0)
         return;
     
     std::lock_guard<std::mutex> lock(m_identityMutex);
-    if (m_printedObj.contains(file_object) == true)
+    if (m_printedObj.contains(file_object) == true) {
         return;
+    }
     
     std::wstringstream ss;
-    ss << L"F,IO,0," << ts << L"," << file_object << L"," << name_hash;
+    ss << L"F,IO,0," << file_object << L"," << name_hash;
     PushLog(ss.str());
 
     m_printedObj.insert(file_object);
 }
 
-void EtwController::ForcePrintIK(ULONG eid, ULONGLONG ts, ULONGLONG file_key, ULONGLONG name_hash)
+void EtwController::ForcePrintIK(ULONG eid, ULONGLONG file_key, ULONGLONG name_hash)
 {
     if (file_key == 0 || name_hash == 0)
         return;
 
     std::wstringstream ss;
-    ss << L"F,IK," << eid << L"," << ts << L"," << file_key << L"," << name_hash;
+    ss << L"F,IK," << eid << L"," << file_key << L"," << name_hash;
     PushLog(ss.str());
 }
 
@@ -351,16 +349,16 @@ void EtwController::HandleFileCreate(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
     // Operation
     if (eid == KFE_CREATE_NEW_FILE)
     {
-        MaybePrintIH(ts, name_hash);
-        MaybePrintIO(ts, fo, name_hash);
+        MaybePrintIH(name_hash);
+        MaybePrintIO(fo, name_hash);
         LogFileCreateOperation(pid, eid, ts, name_hash);
     }
 
     // Delete-on-close mapped to delete operation without file key
     if ((co & 0x00001000) != 0)
     {
-        MaybePrintIH(ts, name_hash);
-        MaybePrintIO(ts, fo, name_hash);
+        MaybePrintIH(name_hash);
+        MaybePrintIO(fo, name_hash);
         LogFileDeleteOperation(pid, eid, ts, name_hash, fo, 0);
     }
 }
@@ -395,8 +393,8 @@ void EtwController::HandleFileWrite(ULONG pid, ULONG eid, ULONGLONG ts, krabs::p
         if (it != m_objToNameHash.end())
             name_hash = it->second;
     }
-    MaybePrintIH(ts, name_hash);
-    MaybePrintIO(ts, fo, name_hash);
+    MaybePrintIH(name_hash);
+    MaybePrintIO(fo, name_hash);
 
     // Operation
     LogFileWriteOperation(pid, eid, ts, fo);
@@ -405,7 +403,7 @@ void EtwController::HandleFileWrite(ULONG pid, ULONG eid, ULONGLONG ts, krabs::p
     m_identityMutex.unlock();
 }
 
-void EtwController::HandleFileRename(ULONG pid, ULONG eid, ULONGLONG ts, krabs::parser& parser)
+void EtwController::HandleFileRename(ULONG pid, ULONG eid, ULONGLONG ts, krabs::parser& parser) // File name in 19 rename to file name in event 27
 {
     ULONGLONG fo = 0;
     ULONGLONG key = 0;
@@ -414,7 +412,7 @@ void EtwController::HandleFileRename(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
 
     if (eid == KFE_RENAME_PATH)
     {
-        parser.try_parse<std::wstring>(L"FileName", path);
+        parser.try_parse<std::wstring>(L"FilePath", path);
         AddToIHCache(ts, path, name_hash);
     }
     else
@@ -427,13 +425,13 @@ void EtwController::HandleFileRename(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
                 name_hash = it->second;
         }
     }
-    MaybePrintIH(ts, name_hash);
+    MaybePrintIH(name_hash);
 
     parser.try_parse<ULONGLONG>(L"FileKey", key);
 
     // Parse done -> identity decisions first
     if (fo != 0)
-        MaybePrintIO(ts, fo, name_hash);
+        MaybePrintIO(fo, name_hash);
 
     // Operation
     LogFileRenameOperation(pid, eid, ts, name_hash, fo, key);
@@ -441,43 +439,37 @@ void EtwController::HandleFileRename(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
 
 void EtwController::HandleFileDelete(ULONG pid, ULONG eid, ULONGLONG ts, krabs::parser& parser)
 {
-    if (eid == KFE_NAME_DELETE)
-    {
-        ULONGLONG key = 0;
-        std::wstring path;
-
-        parser.try_parse<ULONGLONG>(L"FileKey", key);
-        parser.try_parse<std::wstring>(L"FileName", path);
-
-        ULONGLONG name_hash = 0;
-        AddToIHCache(ts, path, name_hash);
-        MaybePrintIH(ts, name_hash);
-        ForcePrintIK(eid, ts, key, name_hash);
-        return;
-    }
-
     ULONGLONG fo = 0;
     ULONGLONG key = 0;
     std::wstring path;
     ULONGLONG name_hash = 0;
 
-    if (eid == KFE_DELETE_PATH)
-    {
+    switch (eid) {
+    case KFE_NAME_DELETE:
+        parser.try_parse<ULONGLONG>(L"FileKey", key);
+        parser.try_parse<std::wstring>(L"FileName", path);
+
+        AddToIHCache(ts, path, name_hash);
+        MaybePrintIH(name_hash);
+        ForcePrintIK(eid, key, name_hash);
+        
+        break;
+
+    case KFE_DELETE_PATH:
         parser.try_parse<std::wstring>(L"FileName", path);
         AddToIHCache(ts, path, name_hash);
-        MaybePrintIH(ts, name_hash);
+        MaybePrintIH(name_hash);
         parser.try_parse<ULONGLONG>(L"FileKey", key);
 
         // If event provides FileObject, print IO too
         parser.try_parse<ULONGLONG>(L"FileObject", fo);
         if (fo != 0)
-            MaybePrintIO(ts, fo, name_hash);
+            MaybePrintIO(fo, name_hash);
         LogFileDeleteOperation(pid, eid, ts, name_hash, fo, key);
-        return;
-    }
 
-    if (eid == KFE_SET_DELETE)
-    {
+        break;
+
+    case KFE_SET_DELETE:
         fo = (ULONGLONG)parser.parse<PVOID>(L"FileObject");
         parser.try_parse<ULONGLONG>(L"FileKey", key);
 
@@ -487,14 +479,18 @@ void EtwController::HandleFileDelete(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
             if (it != m_objToNameHash.end())
                 name_hash = it->second;
         }
-        MaybePrintIH(ts, name_hash);
+        MaybePrintIH(name_hash);
 
         // Parse done -> identity decisions first
-        MaybePrintIO(ts, fo, name_hash);
+        MaybePrintIO(fo, name_hash);
 
         // Operation
         LogFileDeleteOperation(pid, eid, ts, name_hash, fo, key);
-        return;
+
+        break;
+
+    default:
+        break;
     }
 }
 
@@ -551,27 +547,38 @@ void EtwController::StartProviderBlocking()
             }
             uint64_t ts = s.timestamp().QuadPart;
             auto eid = s.event_id();
-
+            //PushLog(wstring(L"EID: ") + to_wstring(eid));
             try {
-                if (eid == KFE_CREATE || eid == KFE_CREATE_NEW_FILE) // Create -> save to cache to retrieve file name event, also check for FILE_DELETE_ON_CLOSE (0x00001000) of CreateOptions
+                switch (eid)
                 {
+                case KFE_CREATE:
+                case KFE_CREATE_NEW_FILE: // Create -> save to cache to retrieve file name event, also check for FILE_DELETE_ON_CLOSE (0x00001000) of CreateOptions
                     HandleFileCreate(pid, eid, ts, parser);
-                }
-                else if (eid == KFE_CLEANUP || eid == KFE_CLOSE) //  Close, clean up -> remove from check
-                {
+                    break;
+
+                case KFE_CLEANUP:
+                case KFE_CLOSE: // Close, clean up -> remove from check
                     HandleFileCleanup(eid, ts, parser);
-                }
-                else if (eid == KFE_WRITE) // Write
-                {
+                    break;
+
+                case KFE_WRITE: // Write
                     HandleFileWrite(pid, eid, ts, parser);
-                }
-                else if (eid == KFE_RENAME_29 || eid == KFE_RENAME || eid == KFE_RENAME_PATH) // Rename
-                {
+                    break;
+
+                case KFE_RENAME_29:
+                case KFE_RENAME:
+                case KFE_RENAME_PATH: // Rename
                     HandleFileRename(pid, eid, ts, parser);
-                }
-                if (eid == KFE_SET_DELETE || eid == KFE_DELETE_PATH || eid == KFE_NAME_DELETE) // SetDelete, DeletePath and NameDelete
-                {
+                    break;
+
+                case KFE_SET_DELETE:
+                case KFE_DELETE_PATH: // SetDelete, DeletePath
+                // case KFE_NAME_DELETE: // NameDelete
                     HandleFileDelete(pid, eid, ts, parser);
+                    break;
+
+                default:
+                    break;
                 }
             }
             catch (...) {}
