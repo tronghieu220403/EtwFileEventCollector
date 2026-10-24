@@ -36,8 +36,6 @@ private:
 
     // ================= Logger =================
     void PushLog(const std::wstring& s);
-    void LoggerThreadProc();
-    void StartLoggerThread();
 
     std::queue<std::wstring> m_logQueue;
     std::mutex m_logMutex;
@@ -47,13 +45,22 @@ private:
     // ================= ETW =================
     void StartProviderBlocking();
 
-    krabs::user_trace m_trace;
-    std::jthread m_traceThread;
+    krabs::user_trace m_userTrace{ L"hieunt_user" };
+
+    std::jthread m_userTraceThread;
 
     ULONG m_curPid;
 
     // ================= Process tracking =================
     std::mutex m_lockProc;
+    std::unordered_map<ULONG, std::wstring> m_pidToPath;
+    void TrackProcess(ULONG pid, const std::wstring& path);
+    std::wstring GetTrackedProcessPath(ULONG pid);
+    static bool IsEdgeProcessPath(const std::wstring& path);
+    static std::wstring ParseProcessImageName(krabs::parser& parser);
+
+    // ================= Kill logging =================
+    void LogEdgeTerminateAttempt(ULONGLONG ts, ULONG source_pid, ULONG target_pid, ULONG return_code);
 
     // ================= Identity tables =================
     // IHCache
@@ -121,6 +128,8 @@ struct EventInfo
 };
 
 // ===== Event IDs =====
+#define KERNEL_AUDIT_API_TERMINATEPROCESS 2
+
 #define KFE_NAME_CREATE                10
 #define KFE_NAME_DELETE                11
 #define KFE_CREATE                     12

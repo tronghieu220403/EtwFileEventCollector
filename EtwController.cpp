@@ -41,8 +41,7 @@ void EtwController::StopThunk()
 
 // ================= Ctor / Dtor =================
 EtwController::EtwController()
-    : m_trace(L"hieunt"),
-    m_curPid(GetCurrentProcessId())
+    : m_curPid(GetCurrentProcessId())
 {
 }
 
@@ -93,46 +92,6 @@ void EtwController::PushLog(const std::wstring& s)
     }
     std::lock_guard<std::mutex> l(m_logMutex);
     m_logQueue.push(s);
-}
-
-void EtwController::LoggerThreadProc()
-{
-    while (true)
-    {
-        Sleep(5000);
-
-        if (m_stopLogger) break;
-
-        std::queue<std::wstring> local;
-
-        {
-            std::lock_guard<std::mutex> l(m_logMutex);
-            if (m_logQueue.empty())
-                continue;
-
-            if (m_logQueue.size() >= 10000)
-                m_logQueue = std::queue<std::wstring>();
-
-            local.swap(m_logQueue);
-        }
-
-        std::wofstream ofs(L"C:\\hieunt_log.jsonl", std::ios::app);
-        if (!ofs.is_open())
-            continue;
-
-        while (!local.empty())
-        {
-            ofs << local.front() << L"\n";
-            local.pop();
-        }
-    }
-}
-
-void EtwController::StartLoggerThread()
-{
-    m_loggerThread = std::jthread([this]() {
-        LoggerThreadProc();
-        });
 }
 
 // ================= IH Cache =================
@@ -269,6 +228,90 @@ void EtwController::MaybePrintProcessInfo(ULONG eid, ULONGLONG ts, ULONG pid, co
     std::wstringstream ss;
     ss << L"P,I," << eid << L"," << ts << L"," << pid << L"," << path;
     PushLog(ss.str());
+}
+
+void EtwController::TrackProcess(ULONG pid, const std::wstring& path)
+{
+    if (pid == 0 || path.empty())
+        return;
+
+    std::lock_guard<std::mutex> lock(m_lockProc);
+    m_pidToPath[pid] = path;
+}
+
+std::wstring EtwController::GetTrackedProcessPath(ULONG pid)
+{
+    if (pid == 0)
+        return L"";
+
+    {
+        std::lock_guard<std::mutex> lock(m_lockProc);
+        auto it = m_pidToPath.find(pid);
+        if (it != m_pidToPath.end() && !it->second.empty())
+            return it->second;
+    }
+
+    return ulti::GetProcessPath(pid);
+}
+
+bool EtwController::IsEdgeProcessPath(const std::wstring& path)
+{
+    if (path.empty())
+        return false;
+
+    const std::wstring lower = ulti::ToLower(path);
+    const std::wstring edge_name = L"msedge.exe";
+
+    if (lower == edge_name)
+        return true;
+
+    if (lower.size() < edge_name.size())
+        return false;
+
+    const size_t pos = lower.size() - edge_name.size();
+    if (lower.compare(pos, edge_name.size(), edge_name) != 0)
+        return false;
+
+    return pos == 0 || lower[pos - 1] == L'\\' || lower[pos - 1] == L'/';
+}
+
+std::wstring EtwController::ParseProcessImageName(krabs::parser& parser)
+{
+    try {
+        std::wstring path;
+        if (parser.try_parse<std::wstring>(L"ImageName", path) && !path.empty())
+            return path;
+    }
+    catch (...) {
+
+    }
+
+    try {
+        std::string ansi_path;
+        if (parser.try_parse<std::string>(L"ImageName", ansi_path) && !ansi_path.empty())
+            return ulti::StrToWstr(ansi_path);
+    }
+    catch (...) {
+
+    }
+
+    return L"";
+}
+
+void EtwController::LogEdgeTerminateAttempt(ULONGLONG ts, ULONG source_pid, ULONG target_pid, ULONG return_code)
+{
+    std::wstring target_path = GetTrackedProcessPath(target_pid);
+    if (!IsEdgeProcessPath(target_path))
+        return;
+
+    std::wstring source_path = GetTrackedProcessPath(source_pid);
+
+    wcout << L"KILL" << ts
+       << L"," << source_pid
+       << L"," << source_path
+       << L"," << target_pid
+       << L"," << target_path
+       << L"," << return_code << endl << endl;
 }
 
 // ================= Identity logging =================
@@ -497,116 +540,78 @@ void EtwController::HandleFileDelete(ULONG pid, ULONG eid, ULONGLONG ts, krabs::
 // ================= ETW =================
 void EtwController::StartProviderBlocking()
 {
-    // ===== Process provider =====
+    // ===== Process provider: keeps PID -> image path fresh, including rundown =====
     krabs::provider<> proc(L"Microsoft-Windows-Kernel-Process");
     proc.any(0x10);
     proc.enable_rundown_events();
 
     auto proc_cb = [this](const EVENT_RECORD& r, const krabs::trace_context& c)
         {
-            auto eid = r.EventHeader.EventDescriptor.Id;
-            if (eid != 1 && eid != 2 && eid != 15) return;
+            const auto eid = r.EventHeader.EventDescriptor.Id;
+            if (eid != 1 && eid != 2 && eid != 15)
+                return;
 
             krabs::schema s(r, c.schema_locator);
             krabs::parser p(s);
-            uint64_t ts = s.timestamp().QuadPart;
 
             ULONG pid = 0;
-            std::wstring proc_path;
-            try {
-                pid = p.parse<ULONG>(L"ProcessID");
-                proc_path = p.parse<std::wstring>(L"ImageName");
-            }
-            catch (...) {}
+            if (!p.try_parse<ULONG>(L"ProcessID", pid))
+                return;
 
-            if (eid == 1 || eid == 15) {
-                MaybePrintProcessInfo(0, ts, pid, proc_path);
-            }
+            const std::wstring proc_path = ParseProcessImageName(p);
+            TrackProcess(pid, proc_path);
         };
 
     krabs::event_filter pf(krabs::predicates::any_event);
     pf.add_on_event_callback(proc_cb);
     proc.add_filter(pf);
+    m_userTrace.enable(proc);
 
-    m_trace.enable(proc);
+    // ===== Audit API provider: event id 2 is TerminateProcess =====
+    krabs::provider<> audit(L"Microsoft-Windows-Kernel-Audit-API-Calls");
+    audit.level(TRACE_LEVEL_VERBOSE);
 
-    // ===== File provider =====
-    krabs::provider<> file(L"Microsoft-Windows-Kernel-File");
-    file.any(0x10 | 0x20 | 0x80 | 0x200 | 0x400 | 0x800 | 0x1000);
-    //file.enable_rundown_events();
-
-    auto file_cb = [this](const EVENT_RECORD& r, const krabs::trace_context& c)
+    auto audit_cb = [this](const EVENT_RECORD& r, const krabs::trace_context& c)
         {
             krabs::schema s(r, c.schema_locator);
-            krabs::parser parser(s);
-            //PrintAllProp(s, parser);
-            //return;
-            uint32_t pid = s.process_id();
-            if (pid == m_curPid || pid == 4) {
+            if (s.event_id() != KERNEL_AUDIT_API_TERMINATEPROCESS)
                 return;
-            }
-            uint64_t ts = s.timestamp().QuadPart;
-            auto eid = s.event_id();
-            //PushLog(wstring(L"EID: ") + to_wstring(eid));
-            try {
-                switch (eid)
-                {
-                case KFE_CREATE:
-                case KFE_CREATE_NEW_FILE: // Create -> save to cache to retrieve file name event, also check for FILE_DELETE_ON_CLOSE (0x00001000) of CreateOptions
-                    HandleFileCreate(pid, eid, ts, parser);
-                    break;
 
-                case KFE_CLEANUP:
-                case KFE_CLOSE: // Close, clean up -> remove from check
-                    HandleFileCleanup(eid, ts, parser);
-                    break;
+            krabs::parser p(s);
 
-                case KFE_WRITE: // Write
-                    HandleFileWrite(pid, eid, ts, parser);
-                    break;
+            ULONG target_pid = 0;
+            ULONG return_code = 0;
+            if (!p.try_parse<ULONG>(L"TargetProcessId", target_pid))
+                return;
 
-                case KFE_RENAME_29:
-                case KFE_RENAME:
-                case KFE_RENAME_PATH: // Rename
-                    HandleFileRename(pid, eid, ts, parser);
-                    break;
+            p.try_parse<ULONG>(L"ReturnCode", return_code);
 
-                case KFE_SET_DELETE:
-                case KFE_DELETE_PATH: // SetDelete, DeletePath
-                // case KFE_NAME_DELETE: // NameDelete
-                    HandleFileDelete(pid, eid, ts, parser);
-                    break;
+            const ULONG source_pid = s.process_id();
+            if (source_pid == m_curPid)
+                return;
 
-                default:
-                    break;
-                }
-            }
-            catch (...) {}
+            LogEdgeTerminateAttempt(s.timestamp().QuadPart, source_pid, target_pid, return_code);
         };
 
-    krabs::event_filter ff(krabs::predicates::any_event);
-    ff.add_on_event_callback(file_cb);
-    file.add_filter(ff);
+    krabs::event_filter af(krabs::predicates::any_event);
+    af.add_on_event_callback(audit_cb);
+    audit.add_filter(af);
+    m_userTrace.enable(audit);
 
-    m_trace.enable(file);
-
-    m_trace.start(); // blocking
+    m_userTrace.start(); // blocking
 }
 
 // ================= Lifecycle =================
 void EtwController::Start()
 {
-    StartLoggerThread();
-
-    // https://lowleveldesign.wordpress.com/2020/08/15/fixing-empty-paths-in-fileio-events-etw
-    m_traceThread = std::jthread([this]() {
+    m_userTraceThread = std::jthread([this]() {
         StartProviderBlocking();
         });
 }
 
 void EtwController::Stop()
 {
-    m_trace.stop();
+    m_userTrace.stop();
 
     m_stopLogger = true;
 
